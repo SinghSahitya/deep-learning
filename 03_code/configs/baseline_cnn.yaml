@@ -9,9 +9,9 @@ training:
   freeze_backbone_epochs: 0
 
 data:
-  root: "04_data/celeb_df_frames"
-  train_csv: "04_data/celeb_df_frames/train.csv"
-  val_csv: "04_data/celeb_df_frames/val.csv"
-  test_csv: "04_data/celeb_df_frames/test.csv"
+  root: "../04_data/celeb_df_frames"
+  train_csv: "../04_data/celeb_df_frames/train.csv"
+  val_csv: "../04_data/celeb_df_frames/val.csv"
+  test_csv: "../04_data/celeb_df_frames/test.csv"
   image_size: 224
   num_workers: 4
