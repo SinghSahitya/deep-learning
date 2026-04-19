@@ -11,7 +11,9 @@
 - Combined spatial and frequency branches in a dual-branch architecture
 
 ## What Did Not Work
-[Fill in honestly after experiments]
+- **Direct GDrive Downloads**: Standard CLI tools failed to index the massive dataset folder reliably, requiring a shift to Kaggle-based acquisition.
+- **Sequential Disk I/O**: Initial frame-by-frame extraction to disk created a massive processing bottleneck; converted to in-memory batch processing for efficient GPU utilization.
+- **Homogeneous Batching**: Standard MTCNN batch processing crashed when frames within a batch returned zero detections; implemented robust exception handling and filtering.
 
 ## What We Believe Is Our Contribution
 - A dual-branch (spatial + frequency) architecture for adversarially robust deepfake detection
