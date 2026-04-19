@@ -11,9 +11,11 @@
 - Combined spatial and frequency branches in a dual-branch architecture
 
 ## What Did Not Work
-- **Direct GDrive Downloads**: Standard CLI tools failed to index the massive dataset folder reliably, requiring a shift to Kaggle-based acquisition.
-- **Sequential Disk I/O**: Initial frame-by-frame extraction to disk created a massive processing bottleneck; converted to in-memory batch processing for efficient GPU utilization.
-- **Homogeneous Batching**: Standard MTCNN batch processing crashed when frames within a batch returned zero detections; implemented robust exception handling and filtering.
+## What Did Not Work
+- **GDrive Folder Indexing**: Large GDrive folder IDs failed with `gdown`; switched to Kaggle CLI for reliable large-scale data acquisition.
+- **Disk-Based Preprocessing**: Saving every raw frame to disk was too slow; switched to in-memory processing for 10x faster frame extraction.
+- **Strict GPU Batching**: MTCNN batch processing crashed on frames with no detectable faces; handled via exception catching to prevent pipeline failure.
+- **Global Environment Paths**: Standard `pip`/`conda` paths were missing on the DLAMI; resolved by manual `venv` activation and initialization.
 
 ## What We Believe Is Our Contribution
 - A dual-branch (spatial + frequency) architecture for adversarially robust deepfake detection
