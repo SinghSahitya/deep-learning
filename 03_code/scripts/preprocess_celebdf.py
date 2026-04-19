@@ -8,7 +8,7 @@ from facenet_pytorch import MTCNN
 # Add the src package to python path
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.data.preprocessing import extract_frames, crop_faces, balance_dataset, create_splits
+from src.data.preprocessing import extract_frames_in_memory, crop_faces_batch, balance_dataset, create_splits
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Preprocess Celeb-DF dataset")
@@ -28,32 +28,17 @@ def process_videos(video_paths, label_name, output_base_dir, frame_interval, det
     faces_dir = os.path.join(output_base_dir, label_name)
     os.makedirs(faces_dir, exist_ok=True)
     
-    # Temporary directory for raw frames
-    temp_frames_dir = os.path.join(output_base_dir, f"temp_{label_name}")
-    os.makedirs(temp_frames_dir, exist_ok=True)
-    
     print(f"Processing {len(video_paths)} videos for {label_name}...")
     for video_path in tqdm(video_paths, desc=f"Extracting {label_name}"):
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
         
-        # 1. Extract frames
-        raw_frames = extract_frames(video_path, temp_frames_dir, frame_interval)
+        # 1. Extract frames into memory
+        frames_tuple = extract_frames_in_memory(video_path, frame_interval)
         
-        # 2. Crop faces
-        for frame_path in raw_frames:
-            # Output path for the face
-            filename = os.path.basename(frame_path)
-            face_path = os.path.join(faces_dir, filename)
+        # 2. Batched Face Cropping
+        saved_paths = crop_faces_batch(frames_tuple, video_name, faces_dir, detector)
+        face_paths.extend(saved_paths)
             
-            # Crop using MTCNN
-            success = crop_faces(frame_path, face_path, detector)
-            if success:
-                face_paths.append(face_path)
-                
-            # Clean up the raw frame to save space
-            os.remove(frame_path)
-            
-    # Remove temp dir
-    os.rmdir(temp_frames_dir)
     return face_paths
 
 def main():
