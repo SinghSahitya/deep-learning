@@ -6,19 +6,12 @@ import random
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-def extract_frames(video_path, output_dir, frame_interval=10):
+def extract_frames_in_memory(video_path, frame_interval=10):
     """
-    Extract every Nth frame from a video using OpenCV.
-    - Open video with cv2.VideoCapture
-    - Read frames, save every `frame_interval`-th frame as PNG
-    - Name format: {video_name}_frame_{frame_number}.png
-    - Return list of saved frame paths
+    Extract every Nth frame from a video and return them as a list of PIL Images.
     """
-    os.makedirs(output_dir, exist_ok=True)
-    video_name = os.path.splitext(os.path.basename(video_path))[0]
     cap = cv2.VideoCapture(video_path)
-    
-    saved_frames = []
+    frames = []
     frame_count = 0
     
     while cap.isOpened():
@@ -27,15 +20,49 @@ def extract_frames(video_path, output_dir, frame_interval=10):
             break
             
         if frame_count % frame_interval == 0:
-            frame_filename = f"{video_name}_frame_{frame_count}.png"
-            output_path = os.path.join(output_dir, frame_filename)
-            cv2.imwrite(output_path, frame)
-            saved_frames.append(output_path)
+            # OpenCV uses BGR, PIL uses RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
+            frames.append((frame_count, img))
             
         frame_count += 1
         
     cap.release()
-    return saved_frames
+    return frames
+
+def crop_faces_batch(frames_tuple, video_name, output_dir, detector):
+    """
+    Detect and crop faces from a batch of images using MTCNN.
+    - frames_tuple: List of (frame_count, PIL_Image)
+    - Returns list of saved image paths
+    """
+    if not frames_tuple:
+        return []
+        
+    os.makedirs(output_dir, exist_ok=True)
+    
+    frame_counts = [f[0] for f in frames_tuple]
+    images = [f[1] for f in frames_tuple]
+    
+    # Generate output paths
+    output_paths = [os.path.join(output_dir, f"{video_name}_frame_{c}.png") for c in frame_counts]
+    
+    saved_paths = []
+    try:
+        # MTCNN processes a list of images and a list of save paths
+        # It handles batch processing internally if provided a list
+        faces = detector(images, save_path=output_paths)
+        
+        # detector returns a list when input is a list
+        if faces is not None:
+            # Verify which outputs were actually saved (in case no face was found in a frame)
+            for face_tensor, out_path in zip(faces, output_paths):
+                if face_tensor is not None and os.path.exists(out_path):
+                    saved_paths.append(out_path)
+    except Exception as e:
+        print(f"Error in batched cropping for {video_name}: {e}")
+        
+    return saved_paths
 
 def crop_faces(frame_path, output_path, detector):
     """
