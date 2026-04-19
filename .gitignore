@@ -1,39 +1,24 @@
-# Data (too large for git)
-data/
-*.mp4
-*.avi
-
-# Checkpoints
-checkpoints/
-*.pth
-*.pt
-
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
-.eggs/
-*.egg-info/
-dist/
-build/
+*.py[cod]
+*$py.class
 
-# Environment
-.env
-.venv/
+# Environments
+.venv
 venv/
+env/
+.env
 
-# IDE
-.vscode/
-.idea/
-*.swp
+# Data and Models (Very large files)
+04_data/
+*.zip
+*.pth
+*.pth.tar
 
-# OS
+# Results and Logs
+05_results/logs/
+05_results/figures/
+
+# OS files
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-wandb/
-
-# Jupyter
-.ipynb_checkpoints/
