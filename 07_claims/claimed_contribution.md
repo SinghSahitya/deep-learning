@@ -11,7 +11,10 @@
 - Combined spatial and frequency branches in a dual-branch architecture
 
 ## What Did Not Work
-[Fill in honestly after experiments]
+- **Vanilla Spatial Detectors**: Initial single-branch classifiers achieved high clean accuracy but collapsed under adversarial attacks, proving baseline spatial features lack inherent robustness.
+- **Traditional Augmentation Defense**: Standard methods like Gaussian blurring and noise injection failed to provide resilience against iterative attacks like PGD.
+- **Late-Fusion Interfacing**: Merging spatial and frequency predictions via simple late-stage ensembling was less effective than mid-level feature vector concatenation.
+- **Memory-Heavy Backbones**: Heavier models like ResNet-152 caused CUDA Out-Of-Memory (OOM) errors during batched adversarial training, necessitating the pivot to EfficientNet-B4.
 
 ## What We Believe Is Our Contribution
 - A dual-branch (spatial + frequency) architecture for adversarially robust deepfake detection

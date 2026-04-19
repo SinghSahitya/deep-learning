@@ -1,13 +1,6 @@
-"""
-Config loader utility.
-
-Owner: Sahitya
-"""
-
 import yaml
 
-
 def load_config(config_path):
-    """Load YAML config file and return as dict."""
-    # TODO
-    raise NotImplementedError
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config

@@ -3,9 +3,9 @@ Project Title: Robust Deepfake Video Detection under Adversarial Conditions
 Course: CS F425 Deep Learning
 
 Members:
-  1. Nitin Nayan       | 2022A8PS1244P | [email]
-  2. Sahitya Singh     | 2022B4A70920P | [email]
-  3. Vishesh Arora     | 2022A7PS0171P | [email]
+  1. Nitin Nayan       | 2022A8PS1244P | f20221244@pilani.bits-pilani.ac.in
+  2. Sahitya Singh     | 2022B4A70920P | f20220920@pilani.bits-pilani.ac.in
+  3. Vishesh Arora     | 2022A7PS0171P | f20220171@pilani.bits-pilani.ac.in
 
-Faculty/TA Mentor: [Fill in]
-Topic Number/Name: [Fill in]
+Faculty/TA Mentor: Pratik Narang
+Topic Name: Robust Deepfake Video Detection under Adversarial Conditions
