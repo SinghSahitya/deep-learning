@@ -11,12 +11,10 @@
 - Combined spatial and frequency branches in a dual-branch architecture
 
 ## What Did Not Work
-## What Did Not Work
-- **Strict GPU Batching**: MTCNN batch processing crashed on frames with no detectable faces; handled via exception catching to prevent pipeline failure.
-- **Vanilla Spatial Classifiers**: Single-branch detectors (EfficientNet-only) achieved >95% clean accuracy but collapsed to <5% under PGD attacks, proving baseline spatial features are non-robust.
-- **Augmentation-Based Defense**: Attempting to use standard image augmentations (blurring, Gaussian noise) as a defense proved ineffective against iterative adversarial attacks like PGD.
-- **Late-Stage Ensembling**: Merging spatial and frequency predictions at the output layer (late fusion) showed poorer robustness compared to our current feature-level concatenation.
-- **Global Environment Paths**: Standard `pip`/`conda` paths were missing on the DLAMI; resolved by manual `venv` activation and initialization.
+- **Vanilla Spatial Detectors**: Initial single-branch classifiers achieved high clean accuracy but collapsed under adversarial attacks, proving baseline spatial features lack inherent robustness.
+- **Traditional Augmentation Defense**: Standard methods like Gaussian blurring and noise injection failed to provide resilience against iterative attacks like PGD.
+- **Late-Fusion Interfacing**: Merging spatial and frequency predictions via simple late-stage ensembling was less effective than mid-level feature vector concatenation.
+- **Memory-Heavy Backbones**: Heavier models like ResNet-152 caused CUDA Out-Of-Memory (OOM) errors during batched adversarial training, necessitating the pivot to EfficientNet-B4.
 
 ## What We Believe Is Our Contribution
 - A dual-branch (spatial + frequency) architecture for adversarially robust deepfake detection
