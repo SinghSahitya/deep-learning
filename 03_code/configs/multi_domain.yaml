@@ -1,0 +1,32 @@
+model:
+  name: "multi_domain"
+  spatial_dim: 256
+  freq_dim: 128
+
+training:
+  epochs: 25
+  batch_size: 32
+  lr: 0.0001
+  weight_decay: 0.00001
+  freeze_backbone_epochs: 5
+  grad_clip: 1.0
+  scheduler: "cosine"
+
+loss:
+  lambda_afs: 0.5
+  lambda_freq: 0.3
+
+adversarial:
+  method: "pgd"
+  epsilon: 0.01568           # 4/255
+  pgd_steps: 10
+  pgd_alpha: 0.00392         # 1/255
+  val_pgd_steps: 5
+
+data:
+  root: "./data/celeb_df_frames"
+  train_csv: "./data/celeb_df_frames/train.csv"
+  val_csv: "./data/celeb_df_frames/val.csv"
+  test_csv: "./data/celeb_df_frames/test.csv"
+  image_size: 224
+  num_workers: 4

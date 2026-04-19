@@ -1,0 +1,11 @@
+Team ID: Team 2
+Project Title: Robust Deepfake Video Detection under Adversarial Conditions
+Course: CS F425 Deep Learning
+
+Members:
+  1. Nitin Nayan       | 2022A8PS1244P | [email]
+  2. Sahitya Singh     | 2022B4A70920P | [email]
+  3. Vishesh Arora     | 2022A7PS0171P | [email]
+
+Faculty/TA Mentor: [Fill in]
+Topic Number/Name: [Fill in]

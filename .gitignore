@@ -1,0 +1,39 @@
+# Data (too large for git)
+data/
+*.mp4
+*.avi
+
+# Checkpoints
+checkpoints/
+*.pth
+*.pt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+wandb/
+
+# Jupyter
+.ipynb_checkpoints/

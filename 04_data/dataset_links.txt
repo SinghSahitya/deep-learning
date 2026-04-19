@@ -1,0 +1,7 @@
+Celeb-DF v2 (Primary Dataset)
+  GitHub: https://github.com/yuezunli/celeb-deepfakeforensics
+  Access: Request via Google Form on the GitHub page
+  Paper: https://arxiv.org/abs/1909.12962
+
+Alternative mirrors:
+  Kaggle: Search "Celeb-DF v2" on kaggle.com/datasets

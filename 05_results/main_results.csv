@@ -1,0 +1,1 @@
+model,clean_acc,fgsm_eps2,fgsm_eps4,fgsm_eps8,pgd_eps4,autoattack_eps4,auc
