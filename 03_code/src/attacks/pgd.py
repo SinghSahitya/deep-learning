@@ -24,5 +24,42 @@ import torch.nn as nn
 
 
 def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None):
-    # TODO
-    raise NotImplementedError
+    """
+    Projected Gradient Descent attack.
+
+    Generates adversarial examples by iteratively applying FGSM-like steps
+    and projecting back into the epsilon-ball around the original image.
+    Uses a random start for better adversarial example diversity.
+    """
+    if alpha is None:
+        alpha = epsilon / 4.0
+
+    bce_loss = nn.BCELoss()
+    labels_float = labels.float().unsqueeze(1)  # (B, 1)
+
+    # Random start within epsilon ball
+    delta = torch.zeros_like(images).uniform_(-epsilon, epsilon)
+    delta = torch.clamp(images + delta, 0.0, 1.0) - images
+    delta.requires_grad_(True)
+
+    for _ in range(num_steps):
+        adv_images = images + delta
+        output = model(adv_images)
+        loss = bce_loss(output["prediction"], labels_float)
+
+        loss.backward()
+
+        # FGSM step on delta
+        grad_sign = delta.grad.data.sign()
+        delta_new = delta.data + alpha * grad_sign
+
+        # Project back into epsilon ball
+        delta_new = torch.clamp(delta_new, -epsilon, epsilon)
+
+        # Ensure adv images stay in [0, 1]
+        delta_new = torch.clamp(images + delta_new, 0.0, 1.0) - images
+
+        delta = delta_new.detach().requires_grad_(True)
+
+    adv_images = torch.clamp(images + delta, 0.0, 1.0)
+    return adv_images.detach()

@@ -16,23 +16,57 @@ forward(x) returns:
     }
 """
 
+import torch
 import torch.nn as nn
+import timm
 
 
 class EfficientNetDetector(nn.Module):
     def __init__(self, spatial_dim=256, pretrained=True):
         super().__init__()
-        # TODO: Build backbone (timm), feature_fc, classifier
-        raise NotImplementedError
+        self.spatial_dim = spatial_dim
+
+        # Backbone: EfficientNet-B4 with classification head removed
+        self.backbone = timm.create_model(
+            'efficientnet_b4', pretrained=pretrained, num_classes=0
+        )
+        # backbone outputs (B, 1792)
+
+        # Project backbone features to spatial_dim
+        self.spatial_fc = nn.Linear(1792, spatial_dim)
+
+        # Classification head
+        self.classifier = nn.Sequential(
+            nn.Linear(spatial_dim, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(128, 1),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
-        # TODO
-        raise NotImplementedError
+        """
+        Args:
+            x: (B, 3, 224, 224) in [0, 1]
+        Returns:
+            dict with prediction, spatial_features, freq_features=None
+        """
+        backbone_out = self.backbone(x)                  # (B, 1792)
+        spatial_features = self.spatial_fc(backbone_out)  # (B, 256)
+        prediction = self.classifier(spatial_features)    # (B, 1)
+
+        return {
+            "prediction": prediction,
+            "spatial_features": spatial_features,
+            "freq_features": None,
+        }
 
     def freeze_backbone(self):
-        # TODO
-        raise NotImplementedError
+        """Freeze EfficientNet backbone parameters."""
+        for param in self.backbone.parameters():
+            param.requires_grad = False
 
     def unfreeze_backbone(self):
-        # TODO
-        raise NotImplementedError
+        """Unfreeze EfficientNet backbone parameters."""
+        for param in self.backbone.parameters():
+            param.requires_grad = True
