@@ -16,13 +16,25 @@ import torch.nn as nn
 
 
 class AdversarialFeatureSimilarityLoss(nn.Module):
+    """
+    AFS Loss: Minimizes the L2 distance between features extracted from
+    clean and adversarial versions of the same input.
+
+    This encourages the model to learn representations that are INVARIANT
+    to adversarial perturbations — small input changes should not cause
+    large feature-space changes.
+    """
+
     def forward(self, clean_features, adv_features):
         """
         Args:
             clean_features: (B, D) features from clean images
             adv_features: (B, D) features from adversarial images
         Returns:
-            Scalar loss
+            Scalar loss value (mean L2 distance across the batch)
         """
-        # TODO
-        raise NotImplementedError
+        # Per-sample L2 distance: ||f(x_i) - f(x_i_adv)||_2
+        distances = torch.norm(clean_features - adv_features, p=2, dim=1)  # (B,)
+
+        # Return mean across batch
+        return distances.mean()

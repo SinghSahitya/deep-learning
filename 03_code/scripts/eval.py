@@ -1,11 +1,9 @@
 """
 Evaluation entry point: run clean + adversarial evaluations and save results.
 
-Owner: Nitin
-
 Usage:
     python scripts/eval.py \
-        --checkpoint checkpoints/multi_domain_full.pth \
+        --checkpoint 05_results/models/best_multi_domain.pth \
         --config configs/multi_domain.yaml \
         --model_name "Full Model (Ours)" \
         --output_dir ../05_results/ \
@@ -61,7 +59,6 @@ def load_model(config, checkpoint_path, device):
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
-    # Load checkpoint
     checkpoint = torch.load(checkpoint_path, map_location=device)
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -76,15 +73,20 @@ def load_model(config, checkpoint_path, device):
 def load_test_data(config):
     """Load test dataset and create DataLoader."""
     from src.data.dataset import DeepfakeDataset
+    from src.data.augmentations import get_val_transforms
 
     test_csv = config["data"]["test_csv"]
     image_size = config["data"].get("image_size", 224)
     num_workers = config["data"].get("num_workers", 4)
+    batch_size = config["training"]["batch_size"]
 
-    test_dataset = DeepfakeDataset(csv_path=test_csv, image_size=image_size)
+    test_dataset = DeepfakeDataset(
+        csv_path=test_csv,
+        transform=get_val_transforms(image_size),
+    )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=config["training"]["batch_size"],
+        batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
@@ -94,30 +96,12 @@ def load_test_data(config):
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate deepfake detector")
-    parser.add_argument(
-        "--checkpoint", type=str, required=True, help="Path to model checkpoint"
-    )
-    parser.add_argument(
-        "--config", type=str, required=True, help="Path to YAML config"
-    )
-    parser.add_argument(
-        "--model_name",
-        type=str,
-        required=True,
-        help="Name for results table",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="../05_results/",
-        help="Output directory",
-    )
+    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--model_name", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default="../05_results/")
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument(
-        "--run_autoattack",
-        action="store_true",
-        help="Run AutoAttack (slow)",
-    )
+    parser.add_argument("--run_autoattack", action="store_true")
     parser.add_argument("--autoattack_samples", type=int, default=500)
     args = parser.parse_args()
 
@@ -126,24 +110,20 @@ def main():
     )
     print(f"Using device: {device}")
 
-    # Load config
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
-    # Create output directories
     figures_dir = os.path.join(args.output_dir, "figures")
     logs_dir = os.path.join(args.output_dir, "logs")
     os.makedirs(figures_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
 
-    # Load model and data
     print(f"Loading model from: {args.checkpoint}")
     model = load_model(config, args.checkpoint, device)
 
     print("Loading test data...")
     test_dataset, test_loader = load_test_data(config)
 
-    # Define attacks
     attacks = {
         "FGSM (eps=2/255)": lambda m, x, y: fgsm_attack(m, x, y, epsilon=2 / 255),
         "FGSM (eps=4/255)": lambda m, x, y: fgsm_attack(m, x, y, epsilon=4 / 255),
@@ -153,11 +133,9 @@ def main():
         ),
     }
 
-    # Run evaluation
     print(f"\n=== Evaluating: {args.model_name} ===")
     results = evaluate_model(model, test_loader, device, attacks=attacks)
 
-    # Print summary
     print(f"\n--- Results for {args.model_name} ---")
     for condition, metrics in results.items():
         print(
@@ -165,28 +143,39 @@ def main():
             f"AUC: {metrics['auc']:.4f}  F1: {metrics['f1']:.4f}"
         )
 
-    # Save results table
+    # Save / append results row to main_results.csv
     results_csv_path = os.path.join(args.output_dir, "main_results.csv")
-    model_row = {args.model_name: {}}
+    row = {"Model": args.model_name}
     for condition, metrics in results.items():
-        model_row[args.model_name][condition] = {
-            "accuracy": metrics["accuracy"],
-            "auc": metrics["auc"],
-            "precision": metrics["precision"],
-            "recall": metrics["recall"],
-            "f1": metrics["f1"],
-        }
+        row[f"{condition} Acc"] = round(float(metrics["accuracy"]), 4)
+        row[f"{condition} AUC"] = round(float(metrics["auc"]), 4)
 
-    # Format and save/append results
-    for condition, metrics in results.items():
-        results_table = format_results_table({condition: metrics})
+    import pandas as pd
+
+    if os.path.exists(results_csv_path) and os.path.getsize(results_csv_path) > 0:
+        try:
+            existing = pd.read_csv(results_csv_path)
+            # Remove existing row with same model name (re-runs overwrite)
+            existing = existing[existing["Model"] != args.model_name]
+            df = pd.concat([existing, pd.DataFrame([row])], ignore_index=True)
+        except Exception:
+            df = pd.DataFrame([row])
+    else:
+        df = pd.DataFrame([row])
+    df.to_csv(results_csv_path, index=False)
     print(f"\nResults saved to: {results_csv_path}")
 
-    # Save confusion matrices
-    safe_name = args.model_name.lower().replace(" ", "_").replace("(", "").replace(")", "")
+    # Confusion matrices
+    safe_name = (
+        args.model_name.lower().replace(" ", "_").replace("(", "").replace(")", "")
+    )
     for condition, metrics in results.items():
-        safe_cond = condition.lower().replace(" ", "_").replace("/", "_").replace("=", "")
-        cm_path = os.path.join(figures_dir, f"confusion_matrix_{safe_name}_{safe_cond}.png")
+        safe_cond = (
+            condition.lower().replace(" ", "_").replace("/", "_").replace("=", "")
+        )
+        cm_path = os.path.join(
+            figures_dir, f"confusion_matrix_{safe_name}_{safe_cond}.png"
+        )
         plot_confusion_matrix(
             metrics["confusion_matrix"],
             title=f"{args.model_name} — {condition}",
@@ -194,7 +183,7 @@ def main():
         )
     print(f"Confusion matrices saved to: {figures_dir}")
 
-    # Save ROC curves
+    # ROC curves
     roc_data = {}
     for condition, metrics in results.items():
         roc_data[f"{args.model_name} ({condition})"] = {
@@ -206,12 +195,16 @@ def main():
     plot_roc_curves(roc_data, roc_path)
     print(f"ROC curves saved to: {roc_path}")
 
-    # Generate adversarial example visualization (using PGD)
+    # Adversarial example visualization (using PGD)
     print("\nGenerating adversarial example visualizations...")
     model.eval()
     sample_batch = next(iter(test_loader))
     sample_images = sample_batch["image"][:6].to(device)
-    sample_labels = sample_batch["label"][:6].to(device)
+    sample_labels_raw = sample_batch["label"][:6].to(device)
+    if sample_labels_raw.dim() > 1:
+        sample_labels = sample_labels_raw.squeeze(-1).long()
+    else:
+        sample_labels = sample_labels_raw.long()
 
     adv_images = pgd_attack(model, sample_images, sample_labels, epsilon=4 / 255)
     perturbations = adv_images - sample_images
@@ -236,14 +229,18 @@ def main():
         print(f"\nRunning AutoAttack on {args.autoattack_samples} samples...")
         from src.attacks.auto_attack import auto_attack_eval
 
-        # Collect subset of test data
-        subset_indices = list(range(min(args.autoattack_samples, len(test_dataset))))
+        subset_size = min(args.autoattack_samples, len(test_dataset))
+        subset_indices = list(range(subset_size))
         subset = Subset(test_dataset, subset_indices)
-        subset_loader = DataLoader(subset, batch_size=len(subset_indices), shuffle=False)
+        subset_loader = DataLoader(subset, batch_size=subset_size, shuffle=False)
         subset_batch = next(iter(subset_loader))
 
         aa_images = subset_batch["image"].to(device)
-        aa_labels = subset_batch["label"].to(device)
+        aa_labels_raw = subset_batch["label"].to(device)
+        if aa_labels_raw.dim() > 1:
+            aa_labels = aa_labels_raw.squeeze(-1).long()
+        else:
+            aa_labels = aa_labels_raw.long()
 
         aa_results = auto_attack_eval(
             model, aa_images, aa_labels, epsilon=4 / 255, batch_size=32
@@ -261,14 +258,15 @@ def main():
     log_path = os.path.join(logs_dir, f"eval_{safe_name}.json")
     log_data = {}
     for condition, metrics in results.items():
-        log_entry = {
-            "accuracy": metrics.get("accuracy"),
-            "auc": metrics.get("auc"),
-            "precision": metrics.get("precision"),
-            "recall": metrics.get("recall"),
-            "f1": metrics.get("f1"),
+        log_data[condition] = {
+            "accuracy": float(metrics.get("accuracy", 0)),
+            "auc": float(metrics.get("auc", 0)),
+            "precision": float(metrics.get("precision", 0))
+            if "precision" in metrics
+            else None,
+            "recall": float(metrics.get("recall", 0)) if "recall" in metrics else None,
+            "f1": float(metrics.get("f1", 0)) if "f1" in metrics else None,
         }
-        log_data[condition] = log_entry
 
     with open(log_path, "w") as f:
         json.dump({"model_name": args.model_name, "results": log_data}, f, indent=2)

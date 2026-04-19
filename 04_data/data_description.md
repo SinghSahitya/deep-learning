@@ -1,16 +1,27 @@
-# Celeb-DF v2 Dataset
+# Dataset Description
 
-This project utilizes the Celeb-DF v2 dataset.
+## Celeb-DF v2
 
-## Specifications
-- **Real Videos**: 590 videos
-- **Synthesis (Fake) Videos**: 5639 videos
-- **Total Subjects**: 59 unique celebrities
+- **Source**: https://github.com/yuezunli/celeb-deepfakeforensics
+- **Type**: Celebrity deepfake video dataset
+- **Real videos**: ~600 (Celeb-real)
+- **Fake videos**: ~5,639 (Celeb-synthesis)
+- **Deepfake method**: Improved face-swapping synthesis
 
-## Preprocessing Pipeline
-Since the original videos are in HD `.mp4` format, we implemented a custom preprocessing pipeline:
-1. **Frame Extraction**: Every 10th frame was extracted from the source videos.
-2. **Face Cropping**: We utilized the PyTorch MTCNN architecture to detect faces, pad the bounding box by 20%, and crop.
-3. **Balancing**: Because the synthesis dataset vastly outnumbers the real dataset, we randomly undersampled the fake frames to match the count of the real frames.
-4. **Resolution**: Final images are `(224, 224, 3)` RGB PNG files.
-5. **Split Layout**: Data is split into `70% Train`, `15% Val`, `15% Test` and documented within CSV mapping files.
+## Preprocessing
+
+1. Frame extraction: every 10th frame from each video (OpenCV)
+2. Face detection and cropping: MTCNN (facenet-pytorch), 224x224 with 20% margin
+3. Class balancing: undersample majority class (fake) to match minority (real)
+4. Split: 70% train / 15% val / 15% test, stratified by label
+5. Random seed: 42
+
+## Final Dataset Statistics
+
+[Fill in after preprocessing]
+
+- Train: [N] images ([N/2] real, [N/2] fake)
+- Val: [N] images
+- Test: [N] images
+- Image size: 224x224 RGB
+- Value range: [0, 1] (ToTensor normalization)

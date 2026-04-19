@@ -1,11 +1,6 @@
 # Tasks — Vishesh (Person C)
-
 ## Role: Robust Training, Novel Loss Functions, Frequency Branch, Ablations
-
----
-
 ## Full Project Context
-
 ### What We Are Building
 
 An **adversarially robust deepfake video detector**. The system is a dual-branch neural network that combines spatial features (EfficientNet-B4) and frequency features (FFT-based CNN) to classify video frames as real or fake. It is trained with a combined loss function that includes adversarial feature similarity regularization, making it robust against adversarial attacks (FGSM, PGD, AutoAttack).

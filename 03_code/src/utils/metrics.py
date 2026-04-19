@@ -24,7 +24,7 @@ def compute_metrics(predictions, labels, threshold=0.5):
     Compute all classification metrics.
 
     Args:
-        predictions: list/array of sigmoid outputs (floats)
+        predictions: list/array of sigmoid outputs (floats in [0, 1])
         labels: list/array of ground truth (0 or 1)
         threshold: classification threshold
 
@@ -77,7 +77,6 @@ def format_results_table(results_dict):
 
     Args:
         results_dict: dict of {condition_name: metrics_dict, ...}
-            Each metrics_dict has keys: accuracy, auc, precision, recall, f1
 
     Returns:
         pandas DataFrame with rows=conditions, columns=metrics

@@ -8,7 +8,6 @@ run_full_evaluation: Convenience wrapper with all standard attacks.
 """
 
 import torch
-import numpy as np
 from tqdm import tqdm
 
 from src.attacks.fgsm import fgsm_attack
@@ -26,7 +25,7 @@ def evaluate_model(model, test_loader, device, attacks=None):
         device: 'cuda' or 'cpu'
         attacks: dict of attack_name -> attack_function
                  e.g., {"fgsm_2": lambda m,x,y: fgsm_attack(m,x,y,2/255),
-                        "pgd_4": lambda m,x,y: pgd_attack(m,x,y,4/255)}
+                        "pgd_4":  lambda m,x,y: pgd_attack(m,x,y,4/255)}
 
     Returns:
         dict: {condition_name: {"accuracy", "auc", "predictions", "labels", ...}}
@@ -37,56 +36,53 @@ def evaluate_model(model, test_loader, device, attacks=None):
     model.eval()
     model.to(device)
 
-    # Collect all conditions to evaluate
     conditions = ["clean"] + list(attacks.keys())
     all_predictions = {c: [] for c in conditions}
     all_labels = {c: [] for c in conditions}
 
-    with torch.no_grad() if len(attacks) == 0 else torch.enable_grad():
+    # Attacks need gradients; purely clean eval can run under no_grad.
+    outer_ctx = torch.enable_grad() if len(attacks) > 0 else torch.no_grad()
+
+    with outer_ctx:
         for batch in tqdm(test_loader, desc="Evaluating"):
             images = batch["image"].to(device)
             labels = batch["label"].to(device)
 
             # --- Clean evaluation ---
             with torch.no_grad():
-                clean_output = model(images)["prediction"]  # (B, 1)
+                clean_output = model(images)["prediction"]
             clean_preds = clean_output.squeeze(1).cpu().numpy()
             all_predictions["clean"].extend(clean_preds.tolist())
             all_labels["clean"].extend(labels.cpu().numpy().tolist())
 
             # --- Adversarial evaluations ---
             for attack_name, attack_fn in attacks.items():
-                # Generate adversarial images (needs gradients)
                 adv_images = attack_fn(model, images, labels)
-
-                # Evaluate on adversarial images
                 with torch.no_grad():
-                    adv_output = model(adv_images)["prediction"]  # (B, 1)
+                    adv_output = model(adv_images)["prediction"]
                 adv_preds = adv_output.squeeze(1).cpu().numpy()
                 all_predictions[attack_name].extend(adv_preds.tolist())
                 all_labels[attack_name].extend(labels.cpu().numpy().tolist())
 
-    # Compute metrics for each condition
     results = {}
     for condition in conditions:
-        metrics = compute_metrics(
-            all_predictions[condition], all_labels[condition]
-        )
+        metrics = compute_metrics(all_predictions[condition], all_labels[condition])
         metrics["predictions"] = all_predictions[condition]
         metrics["labels"] = all_labels[condition]
         results[condition] = metrics
+        print(
+            f"  {condition:25s}  Acc: {metrics['accuracy']:.4f}  "
+            f"AUC: {metrics['auc']:.4f}"
+        )
 
     return results
 
 
 def run_full_evaluation(model, test_loader, device):
     """
-    Convenience function that runs all standard attacks.
-    Defines the attack dict with FGSM (eps=2,4,8/255), PGD (eps=4/255),
-    and calls evaluate_model.
+    Run comprehensive evaluation: clean + FGSM(2,4,8/255) + PGD(4/255).
 
-    Returns:
-        results dict from evaluate_model
+    Returns dict of evaluation results per condition.
     """
     attacks = {
         "fgsm_eps2": lambda m, x, y: fgsm_attack(m, x, y, epsilon=2 / 255),

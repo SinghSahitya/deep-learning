@@ -1,109 +1,159 @@
+"""
+Baseline training loop (clean data, BCE loss only).
+
+Owner: Sahitya
+
+- Adam optimizer with LR and weight_decay from config
+- BCELoss
+- Optional backbone freezing for first N epochs (if model supports it)
+- Saves best checkpoint by val accuracy
+- Returns training history dict
+"""
+
 import os
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from tqdm import tqdm
 import json
 
-def train_baseline(model, train_loader, val_loader, config, device, save_dir="05_results/models/"):
+import torch
+import torch.nn as nn
+from tqdm import tqdm
+
+
+def train_baseline(model, train_loader, val_loader, config, device):
     """
-    Standard training loop for baseline models.
+    Standard (non-adversarial) training loop with BCE loss.
+
+    Args:
+        model: BaselineCNN, EfficientNetDetector, or MultiDomainDetector
+        train_loader: DataLoader yielding {"image": Tensor, "label": Tensor}
+        val_loader: DataLoader
+        config: DotDict from YAML config
+        device: 'cuda' or 'cpu'
+
+    Returns:
+        history: {"train_loss": [...], "val_loss": [...], "val_acc": [...]}
     """
-    epochs = config['training'].get('epochs', 20)
-    lr = config['training'].get('lr', 1e-4)
-    weight_decay = config['training'].get('weight_decay', 1e-5)
-    freeze_epochs = config['training'].get('freeze_backbone_epochs', 5)
-    
-    os.makedirs(save_dir, exist_ok=True)
-    
+    epochs = config.training.epochs
+    lr = config.training.lr
+    weight_decay = config.training.weight_decay
+    freeze_epochs = config.training.get("freeze_backbone_epochs", 0)
+
+    checkpoint_dir = config.get("checkpoint_dir", "05_results/models")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    model_name = config.model.name
+
+    model = model.to(device)
     criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    
+
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs, eta_min=1e-6
+    )
+
+    history = {"train_loss": [], "val_loss": [], "val_acc": []}
     best_val_acc = 0.0
-    history = {
-        "train_loss": [],
-        "val_loss": [],
-        "val_acc": []
-    }
-    
-    for epoch in range(epochs):
-        print(f"\nEpoch {epoch+1}/{epochs}")
-        
-        # Backbone freezing logic (if applicable, like for EfficientNet)
-        if hasattr(model, 'backbone'):
-            if epoch < freeze_epochs:
-                for param in model.backbone.parameters():
-                    param.requires_grad = False
-                print("Backbone frozen.")
-            elif epoch == freeze_epochs:
-                for param in model.backbone.parameters():
-                    param.requires_grad = True
-                print("Backbone unfrozen for fine-tuning.")
-                # Optionally reduce learning rate for fine-tuning
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr * 0.1
-        
-        # Train Loop
+
+    for epoch in range(1, epochs + 1):
+        # Backbone freezing (if model supports it)
+        if hasattr(model, "freeze_backbone"):
+            if epoch <= freeze_epochs:
+                model.freeze_backbone()
+            elif epoch == freeze_epochs + 1:
+                model.unfreeze_backbone()
+                optimizer = torch.optim.Adam(
+                    model.parameters(), lr=lr, weight_decay=weight_decay
+                )
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer, T_max=max(epochs - freeze_epochs, 1), eta_min=1e-6
+                )
+
+        # ── Train ──
         model.train()
-        train_loss = 0.0
-        
-        for batch in tqdm(train_loader, desc="Training"):
-            images = batch['image'].to(device)
-            labels = batch['label'].to(device)
-            
+        epoch_loss = 0.0
+        num_batches = 0
+
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", leave=False)
+        for batch in pbar:
+            images = batch["image"].to(device)
+            labels_raw = batch["label"].to(device)
+
+            # Ensure label shape (B, 1) float
+            if labels_raw.dim() == 1:
+                labels = labels_raw.float().unsqueeze(1)
+            else:
+                labels = labels_raw.float()
+
+            output = model(images)
+            loss = criterion(output["prediction"], labels)
+
             optimizer.zero_grad()
-            outputs = model(images)
-            predictions = outputs['prediction']
-            
-            loss = criterion(predictions, labels)
             loss.backward()
             optimizer.step()
-            
-            train_loss += loss.item()
-            
-        avg_train_loss = train_loss / len(train_loader)
-        
-        # Validation Loop
+
+            epoch_loss += loss.item()
+            num_batches += 1
+            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+
+        scheduler.step()
+        avg_train_loss = epoch_loss / max(num_batches, 1)
+
+        # ── Validate ──
         model.eval()
         val_loss = 0.0
-        corrects = 0
+        correct = 0
         total = 0
-        
+        val_batches = 0
+
         with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Validation"):
-                images = batch['image'].to(device)
-                labels = batch['label'].to(device)
-                
-                outputs = model(images)
-                predictions = outputs['prediction']
-                
-                loss = criterion(predictions, labels)
+            for batch in val_loader:
+                images = batch["image"].to(device)
+                labels_raw = batch["label"].to(device)
+
+                if labels_raw.dim() == 1:
+                    labels_float = labels_raw.float().unsqueeze(1)
+                    labels_int = labels_raw.long()
+                else:
+                    labels_float = labels_raw.float()
+                    labels_int = labels_raw.squeeze(-1).long()
+
+                output = model(images)
+                loss = criterion(output["prediction"], labels_float)
                 val_loss += loss.item()
-                
-                # Accuracy calc (Predictions are probabilities from Sigmoid)
-                preds_binary = (predictions > 0.5).float()
-                corrects += (preds_binary == labels).sum().item()
-                total += labels.size(0)
-                
-        avg_val_loss = val_loss / len(val_loader)
-        val_acc = corrects / total
-        
-        print(f"Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.4f}")
-        
+                val_batches += 1
+
+                preds = (output["prediction"].squeeze(1) >= 0.5).long()
+                correct += (preds == labels_int).sum().item()
+                total += labels_int.size(0)
+
+        avg_val_loss = val_loss / max(val_batches, 1)
+        val_acc = correct / max(total, 1)
+
         history["train_loss"].append(avg_train_loss)
         history["val_loss"].append(avg_val_loss)
         history["val_acc"].append(val_acc)
-        
-        # Save best model
+
+        print(
+            f"Epoch {epoch}/{epochs} | "
+            f"Train Loss: {avg_train_loss:.4f} | "
+            f"Val Loss: {avg_val_loss:.4f} | "
+            f"Val Acc: {val_acc:.4f}"
+        )
+
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            save_path = os.path.join(save_dir, f"best_{config['model']['name']}.pth")
-            torch.save(model.state_dict(), save_path)
-            print(f"Saved new best model with Val Acc: {best_val_acc:.4f}")
-            
-    # Save training history
-    history_path = os.path.join(save_dir, f"history_{config['model']['name']}.json")
-    with open(history_path, 'w') as f:
-        json.dump(history, f, indent=4)
-        
+            ckpt_path = os.path.join(checkpoint_dir, f"best_{model_name}.pth")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "val_acc": val_acc,
+                },
+                ckpt_path,
+            )
+            print(f"  ✓ Saved best checkpoint (acc: {val_acc:.4f}) -> {ckpt_path}")
+
+    print(f"\nTraining complete. Best val accuracy: {best_val_acc:.4f}")
     return history
