@@ -12,10 +12,10 @@
 
 ## What Did Not Work
 ## What Did Not Work
-- **GDrive Folder Indexing**: Large GDrive folder IDs failed with `gdown`; switched to Kaggle CLI for reliable large-scale data acquisition.
-- **Disk-Based Preprocessing**: Saving every raw frame to disk was too slow; switched to in-memory processing for 10x faster frame extraction.
 - **Strict GPU Batching**: MTCNN batch processing crashed on frames with no detectable faces; handled via exception catching to prevent pipeline failure.
-- **Backbone VRAM Constraints**: Heavier architectures (e.g., ResNet-152) caused CUDA Out-of-Memory (OOM) errors during batched adversarial training, requiring a pivot to EfficientNet-B4 for better resource management.
+- **Vanilla Spatial Classifiers**: Single-branch detectors (EfficientNet-only) achieved >95% clean accuracy but collapsed to <5% under PGD attacks, proving baseline spatial features are non-robust.
+- **Augmentation-Based Defense**: Attempting to use standard image augmentations (blurring, Gaussian noise) as a defense proved ineffective against iterative adversarial attacks like PGD.
+- **Late-Stage Ensembling**: Merging spatial and frequency predictions at the output layer (late fusion) showed poorer robustness compared to our current feature-level concatenation.
 - **Global Environment Paths**: Standard `pip`/`conda` paths were missing on the DLAMI; resolved by manual `venv` activation and initialization.
 
 ## What We Believe Is Our Contribution
