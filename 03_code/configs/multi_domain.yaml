@@ -19,9 +19,9 @@ loss:
 adversarial:
   method: "pgd"
   epsilon: 0.01568           # 4/255
-  pgd_steps: 10
+  pgd_steps: 3
   pgd_alpha: 0.00392         # 1/255
-  val_pgd_steps: 5
+  val_pgd_steps: 2
 
 data:
   root: "../04_data/celeb_df_frames"
