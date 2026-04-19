@@ -12,11 +12,24 @@ from torchvision import transforms
 
 def get_train_transforms(image_size=224):
     """Training augmentations: flip, rotation, color jitter."""
-    # TODO
-    raise NotImplementedError
+    return transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(10),
+            transforms.ColorJitter(
+                brightness=0.2, contrast=0.2, saturation=0.1
+            ),
+            transforms.ToTensor(),
+        ]
+    )
 
 
 def get_val_transforms(image_size=224):
     """Validation/test transforms: resize + to tensor only."""
-    # TODO
-    raise NotImplementedError
+    return transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+        ]
+    )
