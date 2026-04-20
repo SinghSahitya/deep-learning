@@ -1,1 +1,4 @@
-model,clean_acc,fgsm_eps2,fgsm_eps4,fgsm_eps8,pgd_eps4,autoattack_eps4,auc
+Model,clean Acc,clean AUC,FGSM (eps=2/255) Acc,FGSM (eps=2/255) AUC,FGSM (eps=4/255) Acc,FGSM (eps=4/255) AUC,FGSM (eps=8/255) Acc,FGSM (eps=8/255) AUC,PGD (eps=4/255) Acc,PGD (eps=4/255) AUC
+EfficientNet (no defense),0.969,0.9959,0.4141,0.3247,0.4995,0.5078,0.5013,0.4878,0.0001,0.0
+Baseline CNN,0.903,0.9644,0.0027,0.0,0.0743,0.0001,0.2986,0.0354,0.0,0.0
+Full Model (Ours),0.5224,0.9117,0.5103,0.6077,0.5101,0.4979,0.502,0.4658,0.0007,0.0
