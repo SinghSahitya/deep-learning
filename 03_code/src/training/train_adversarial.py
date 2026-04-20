@@ -147,7 +147,8 @@ def train_adversarial(model, train_loader, val_loader, config, device):
 
             with autocast(enabled=use_amp):
                 adv_output = model(adv_images)
-                loss_dict = criterion(clean_output, adv_output, labels)
+
+            loss_dict = criterion(clean_output, adv_output, labels)
 
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss_dict["total"]).backward()
@@ -260,6 +261,7 @@ def _validate(model, val_loader, criterion, device, eps, pgd_steps, pgd_alpha, u
             pgd_preds = (adv_output["prediction"].squeeze(1) >= 0.5).long()
             pgd_correct += (pgd_preds == labels).sum().item()
 
+        with torch.no_grad():
             loss_dict = criterion(clean_output, adv_output, labels)
             val_loss += loss_dict["total"].item()
 
