@@ -49,8 +49,9 @@ class CombinedRobustLoss(nn.Module):
         labels_float = labels.float().unsqueeze(1)  # (B, 1)
 
         # ── Classification loss on clean and adversarial predictions ──
-        bce_clean = self.bce(clean_output["prediction"], labels_float)
-        bce_adv = self.bce(adv_output["prediction"], labels_float)
+        # .float() ensures fp32 for BCELoss under AMP
+        bce_clean = self.bce(clean_output["prediction"].float(), labels_float)
+        bce_adv = self.bce(adv_output["prediction"].float(), labels_float)
 
         # ── Spatial AFS loss (from Khan et al.) ──
         afs_spatial = self.afs(

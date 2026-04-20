@@ -44,8 +44,8 @@ def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None, use_amp
 
         with autocast(enabled=use_amp):
             output = model(adv_images)["prediction"]
-            loss = criterion(output.squeeze(1), labels.float())
 
+        loss = criterion(output.float().squeeze(1), labels.float())
         loss.backward()
 
         adv_images = adv_images + alpha * adv_images.grad.sign()
