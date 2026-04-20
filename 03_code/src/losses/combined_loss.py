@@ -11,6 +11,7 @@ forward() returns dict:
 
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast
 from .adversarial_feature_similarity import AdversarialFeatureSimilarityLoss
 
 
@@ -35,6 +36,7 @@ class CombinedRobustLoss(nn.Module):
         self.lambda_afs = lambda_afs
         self.lambda_freq = lambda_freq
 
+    @autocast(enabled=False)
     def forward(self, clean_output, adv_output, labels):
         """
         Args:
@@ -49,22 +51,21 @@ class CombinedRobustLoss(nn.Module):
         labels_float = labels.float().unsqueeze(1)  # (B, 1)
 
         # ── Classification loss on clean and adversarial predictions ──
-        # .float() ensures fp32 for BCELoss under AMP
         bce_clean = self.bce(clean_output["prediction"].float(), labels_float)
         bce_adv = self.bce(adv_output["prediction"].float(), labels_float)
 
         # ── Spatial AFS loss (from Khan et al.) ──
         afs_spatial = self.afs(
-            clean_output["spatial_features"],
-            adv_output["spatial_features"]
+            clean_output["spatial_features"].float(),
+            adv_output["spatial_features"].float()
         )
 
         # ── Frequency consistency loss (OUR CONTRIBUTION) ──
         # If freq_features is None (e.g., spatial-only model), skip freq loss
         if clean_output["freq_features"] is not None and adv_output["freq_features"] is not None:
             afs_freq = self.afs(
-                clean_output["freq_features"],
-                adv_output["freq_features"]
+                clean_output["freq_features"].float(),
+                adv_output["freq_features"].float()
             )
         else:
             afs_freq = torch.tensor(0.0, device=labels.device)
