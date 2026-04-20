@@ -12,7 +12,7 @@ import torch.nn as nn
 from torch.cuda.amp import autocast
 
 
-def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None, use_amp=False):
+def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None, use_amp=False, keep_mode=False):
     """
     PGD attack implementation with optional mixed-precision support.
 
@@ -24,6 +24,8 @@ def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None, use_amp
         num_steps: PGD iterations (default 10)
         alpha: step size per iteration (default epsilon/4)
         use_amp: use mixed precision for forward passes
+        keep_mode: if True, don't switch to eval (used during adversarial training
+                   to keep BN in train mode for consistency)
 
     Returns:
         (B, 3, 224, 224) adversarial images clamped to [0, 1]
@@ -32,7 +34,8 @@ def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None, use_amp
         alpha = epsilon / 4
 
     was_training = model.training
-    model.eval()
+    if not keep_mode:
+        model.eval()
 
     criterion = nn.BCELoss()
 
@@ -52,7 +55,7 @@ def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None, use_amp
         perturbation = (adv_images - images).clamp(-epsilon, epsilon)
         adv_images = (images + perturbation).clamp(0.0, 1.0).detach()
 
-    if was_training:
+    if not keep_mode and was_training:
         model.train()
 
     return adv_images

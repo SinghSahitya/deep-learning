@@ -5,13 +5,13 @@ Owner: Vishesh
 
 Per batch:
     1. Forward on clean images
-    2. Generate PGD adversarial examples
+    2. Generate PGD adversarial examples (BN stays in train mode)
     3. Forward on adversarial images
     4. Compute CombinedRobustLoss
     5. Backward + optimizer step
 
 Validates on both clean and PGD accuracy.
-Saves best checkpoint by robust (PGD) val accuracy.
+Saves best checkpoint by combined metric (0.5*clean + 0.5*pgd).
 """
 
 import os
@@ -43,10 +43,12 @@ def train_adversarial(model, train_loader, val_loader, config, device):
     eps = config.adversarial.epsilon
     pgd_steps = config.adversarial.pgd_steps
     pgd_alpha = config.adversarial.pgd_alpha
-    val_pgd_steps = config.adversarial.get("val_pgd_steps", 5)
+    val_pgd_steps = config.adversarial.get("val_pgd_steps", 7)
 
     checkpoint_dir = config.get("checkpoint_dir", "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
+
+    checkpoint_tag = config.get("checkpoint_tag", config.model.name)
 
     # ── Setup ──
     model = model.to(device)
@@ -83,7 +85,7 @@ def train_adversarial(model, train_loader, val_loader, config, device):
         "lr": [],
     }
 
-    best_pgd_acc = 0.0
+    best_combined = 0.0
 
     for epoch in range(1, epochs + 1):
         # ── Backbone freezing / unfreezing ──
@@ -105,9 +107,18 @@ def train_adversarial(model, train_loader, val_loader, config, device):
                     )
         elif epoch == freeze_epochs + 1:
             model.unfreeze_backbone()
-            optimizer = torch.optim.Adam(
-                model.parameters(), lr=lr, weight_decay=weight_decay
-            )
+            backbone_lr = lr * 0.1
+            head_params = []
+            backbone_params = []
+            for name, param in model.named_parameters():
+                if "backbone" in name:
+                    backbone_params.append(param)
+                else:
+                    head_params.append(param)
+            optimizer = torch.optim.Adam([
+                {"params": backbone_params, "lr": backbone_lr},
+                {"params": head_params, "lr": lr},
+            ], weight_decay=weight_decay)
             if scheduler_type == "cosine":
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer, T_max=epochs - freeze_epochs, eta_min=1e-6
@@ -142,6 +153,7 @@ def train_adversarial(model, train_loader, val_loader, config, device):
                 num_steps=pgd_steps,
                 alpha=pgd_alpha,
                 use_amp=use_amp,
+                keep_mode=True,
             )
             adv_images = adv_images.detach()
 
@@ -205,19 +217,21 @@ def train_adversarial(model, train_loader, val_loader, config, device):
 
         # ── Logging ──
         frozen_str = " [backbone frozen]" if epoch <= freeze_epochs else ""
+        combined = 0.5 * val_clean_acc + 0.5 * val_pgd_acc
         print(
             f"Epoch {epoch}/{epochs}{frozen_str} | "
             f"Loss: {avg_loss:.4f} | "
             f"BCE(c/a): {avg_bce_clean:.4f}/{avg_bce_adv:.4f} | "
             f"AFS(s/f): {avg_afs_spatial:.4f}/{avg_afs_freq:.4f} | "
             f"Val Clean: {val_clean_acc:.4f} | Val PGD: {val_pgd_acc:.4f} | "
+            f"Combined: {combined:.4f} | "
             f"LR: {optimizer.param_groups[0]['lr']:.6f}"
         )
 
-        # ── Save best checkpoint by PGD val accuracy ──
-        if val_pgd_acc > best_pgd_acc:
-            best_pgd_acc = val_pgd_acc
-            ckpt_path = os.path.join(checkpoint_dir, "best_robust.pth")
+        # ── Save best checkpoint by combined metric ──
+        if combined > best_combined:
+            best_combined = combined
+            ckpt_path = os.path.join(checkpoint_dir, f"best_{checkpoint_tag}.pth")
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
@@ -226,9 +240,9 @@ def train_adversarial(model, train_loader, val_loader, config, device):
                 "val_pgd_acc": val_pgd_acc,
                 "config": dict(config),
             }, ckpt_path)
-            print(f"  ✓ Saved best robust checkpoint (PGD acc: {val_pgd_acc:.4f})")
+            print(f"  -> Saved best checkpoint (combined: {combined:.4f}) -> {ckpt_path}")
 
-    print(f"\nTraining complete. Best PGD val accuracy: {best_pgd_acc:.4f}")
+    print(f"\nTraining complete. Best combined (0.5*clean + 0.5*pgd): {best_combined:.4f}")
     return history
 
 

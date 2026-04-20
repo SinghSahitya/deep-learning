@@ -76,6 +76,7 @@ def main():
     # Load config
     config = load_config(args.config)
     config["checkpoint_dir"] = args.checkpoint_dir
+    config["checkpoint_tag"] = os.path.splitext(os.path.basename(args.config))[0]
 
     device = args.device
     if device == "cuda" and not torch.cuda.is_available():
@@ -122,10 +123,11 @@ def main():
         print("\n=== Baseline Training ===")
         history = train_baseline(model, train_loader, val_loader, config, device)
 
-    # Save history as JSON
+    # Save history as JSON (use config filename to avoid overwrites)
     logs_dir = "05_results/logs"
     os.makedirs(logs_dir, exist_ok=True)
-    history_path = os.path.join(logs_dir, f"{config.model.name}_history.json")
+    config_stem = os.path.splitext(os.path.basename(args.config))[0]
+    history_path = os.path.join(logs_dir, f"history_{config_stem}.json")
     with open(history_path, "w") as f:
         json.dump(_make_json_safe(history), f, indent=2)
     print(f"\nTraining history saved to {history_path}")
