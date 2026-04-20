@@ -37,3 +37,5 @@ wandb/
 
 # Jupyter
 .ipynb_checkpoints/
+04_data/celeb_df_frames/
+04_data/celeb_df_raw/
