@@ -17,6 +17,7 @@ Saves best checkpoint by robust (PGD) val accuracy.
 import os
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 
 from src.attacks.pgd import pgd_attack
@@ -26,24 +27,7 @@ from src.losses.combined_loss import CombinedRobustLoss
 def train_adversarial(model, train_loader, val_loader, config, device):
     """
     Full adversarial training loop with AFS + frequency consistency loss.
-
-    Implements:
-    - Backbone freezing for warm-up epochs
-    - On-the-fly PGD adversarial example generation
-    - Combined robust loss (BCE + AFS spatial + AFS freq)
-    - Cosine annealing / ReduceLROnPlateau scheduling
-    - Gradient clipping to prevent explosion from adversarial training
-    - Best checkpoint saving by robust (PGD) validation accuracy
-
-    Args:
-        model: MultiDomainDetector or EfficientNetDetector
-        train_loader: DataLoader yielding {"image": Tensor, "label": Tensor}
-        val_loader: DataLoader
-        config: DotDict from YAML config
-        device: 'cuda' or 'cpu'
-
-    Returns:
-        history: dict with per-epoch logs of all loss components and val metrics
+    Uses mixed precision (AMP) for ~2x speedup on GPU.
     """
     # ── Extract config values ──
     epochs = config.training.epochs
@@ -67,6 +51,9 @@ def train_adversarial(model, train_loader, val_loader, config, device):
     # ── Setup ──
     model = model.to(device)
     criterion = CombinedRobustLoss(lambda_afs=lambda_afs, lambda_freq=lambda_freq).to(device)
+
+    use_amp = device == "cuda"
+    scaler = GradScaler(enabled=use_amp)
 
     optimizer = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
@@ -102,7 +89,6 @@ def train_adversarial(model, train_loader, val_loader, config, device):
         # ── Backbone freezing / unfreezing ──
         if epoch <= freeze_epochs:
             model.freeze_backbone()
-            # Rebuild optimizer to only update unfrozen params
             if epoch == 1:
                 optimizer = torch.optim.Adam(
                     filter(lambda p: p.requires_grad, model.parameters()),
@@ -119,7 +105,6 @@ def train_adversarial(model, train_loader, val_loader, config, device):
                     )
         elif epoch == freeze_epochs + 1:
             model.unfreeze_backbone()
-            # Rebuild optimizer with all parameters now unfrozen
             optimizer = torch.optim.Adam(
                 model.parameters(), lr=lr, weight_decay=weight_decay
             )
@@ -145,42 +130,32 @@ def train_adversarial(model, train_loader, val_loader, config, device):
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} [Train]", leave=False)
         for batch in pbar:
-            images = batch["image"].to(device)
-            labels = batch["label"].to(device)
+            images = batch["image"].to(device, non_blocking=True)
+            labels = batch["label"].to(device, non_blocking=True)
 
-            # 1. Forward pass on clean images
-            clean_output = model(images)
+            with autocast(enabled=use_amp):
+                clean_output = model(images)
 
-            # 2. Generate adversarial examples using PGD
-            #    Model stays in train mode for consistent BatchNorm statistics
             adv_images = pgd_attack(
                 model, images, labels,
                 epsilon=eps,
                 num_steps=pgd_steps,
                 alpha=pgd_alpha,
+                use_amp=use_amp,
             )
-
-            # 3. Detach adversarial images before second forward pass
-            #    (don't backprop through the attack generation)
             adv_images = adv_images.detach()
 
-            # 4. Forward pass on adversarial images
-            adv_output = model(adv_images)
+            with autocast(enabled=use_amp):
+                adv_output = model(adv_images)
+                loss_dict = criterion(clean_output, adv_output, labels)
 
-            # 5. Compute combined loss
-            loss_dict = criterion(clean_output, adv_output, labels)
-
-            # 6. Backward pass
-            optimizer.zero_grad()
-            loss_dict["total"].backward()
-
-            # 7. Gradient clipping to prevent explosion
+            optimizer.zero_grad(set_to_none=True)
+            scaler.scale(loss_dict["total"]).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
 
-            # 8. Optimizer step
-            optimizer.step()
-
-            # Accumulate for logging
             epoch_loss += loss_dict["total"].item()
             epoch_bce_clean += loss_dict["bce_clean"]
             epoch_bce_adv += loss_dict["bce_adv"]
@@ -208,11 +183,12 @@ def train_adversarial(model, train_loader, val_loader, config, device):
         history["afs_freq"].append(avg_afs_freq)
 
         # ══════════════════════════════════════════
-        # VALIDATION PHASE
+        # VALIDATION PHASE (single pass)
         # ══════════════════════════════════════════
         val_clean_acc, val_pgd_acc, val_loss = _validate(
             model, val_loader, criterion, device,
             eps=eps, pgd_steps=val_pgd_steps, pgd_alpha=pgd_alpha,
+            use_amp=use_amp,
         )
 
         history["val_clean_acc"].append(val_clean_acc)
@@ -255,80 +231,42 @@ def train_adversarial(model, train_loader, val_loader, config, device):
     return history
 
 
-@torch.no_grad()
-def _validate_clean(model, val_loader, device):
-    """Compute clean validation accuracy."""
+def _validate(model, val_loader, criterion, device, eps, pgd_steps, pgd_alpha, use_amp=False):
+    """Single-pass validation: clean acc, PGD acc, and val loss all at once."""
     model.eval()
-    correct = 0
+    clean_correct = 0
+    pgd_correct = 0
     total = 0
-
-    for batch in val_loader:
-        images = batch["image"].to(device)
-        labels = batch["label"].to(device)
-
-        output = model(images)
-        preds = (output["prediction"].squeeze(1) >= 0.5).long()
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
-
-    return correct / max(total, 1)
-
-
-def _validate_pgd(model, val_loader, device, eps, pgd_steps, pgd_alpha):
-    """Compute PGD validation accuracy (fewer steps for speed)."""
-    model.eval()
-    correct = 0
-    total = 0
-
-    for batch in val_loader:
-        images = batch["image"].to(device)
-        labels = batch["label"].to(device)
-
-        # Generate PGD adversarial examples (model in eval mode for val)
-        adv_images = pgd_attack(
-            model, images, labels,
-            epsilon=eps,
-            num_steps=pgd_steps,
-            alpha=pgd_alpha,
-        )
-
-        with torch.no_grad():
-            output = model(adv_images)
-            preds = (output["prediction"].squeeze(1) >= 0.5).long()
-            correct += (preds == labels).sum().item()
-            total += labels.size(0)
-
-    return correct / max(total, 1)
-
-
-def _validate(model, val_loader, criterion, device, eps, pgd_steps, pgd_alpha):
-    """Run full validation: clean acc, PGD acc, and validation loss."""
-    clean_acc = _validate_clean(model, val_loader, device)
-
-    pgd_acc = _validate_pgd(model, val_loader, device, eps, pgd_steps, pgd_alpha)
-
-    # Compute validation loss on clean + adv
-    model.eval()
     val_loss = 0.0
     num_batches = 0
 
     for batch in val_loader:
-        images = batch["image"].to(device)
-        labels = batch["label"].to(device)
+        images = batch["image"].to(device, non_blocking=True)
+        labels = batch["label"].to(device, non_blocking=True)
 
-        with torch.no_grad():
+        with torch.no_grad(), autocast(enabled=use_amp):
             clean_output = model(images)
+            clean_preds = (clean_output["prediction"].squeeze(1) >= 0.5).long()
+            clean_correct += (clean_preds == labels).sum().item()
 
         adv_images = pgd_attack(
             model, images, labels,
             epsilon=eps, num_steps=pgd_steps, alpha=pgd_alpha,
+            use_amp=use_amp,
         )
 
-        with torch.no_grad():
+        with torch.no_grad(), autocast(enabled=use_amp):
             adv_output = model(adv_images)
+            pgd_preds = (adv_output["prediction"].squeeze(1) >= 0.5).long()
+            pgd_correct += (pgd_preds == labels).sum().item()
+
             loss_dict = criterion(clean_output, adv_output, labels)
             val_loss += loss_dict["total"].item()
-            num_batches += 1
 
+        total += labels.size(0)
+        num_batches += 1
+
+    clean_acc = clean_correct / max(total, 1)
+    pgd_acc = pgd_correct / max(total, 1)
     avg_val_loss = val_loss / max(num_batches, 1)
     return clean_acc, pgd_acc, avg_val_loss

@@ -9,11 +9,12 @@ Much stronger than FGSM; standard for adversarial robustness evaluation.
 
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast
 
 
-def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None):
+def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None, use_amp=False):
     """
-    PGD attack implementation.
+    PGD attack implementation with optional mixed-precision support.
 
     Args:
         model: deepfake detector following forward() contract
@@ -22,6 +23,7 @@ def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None):
         epsilon: perturbation budget (e.g., 4/255)
         num_steps: PGD iterations (default 10)
         alpha: step size per iteration (default epsilon/4)
+        use_amp: use mixed precision for forward passes
 
     Returns:
         (B, 3, 224, 224) adversarial images clamped to [0, 1]
@@ -34,24 +36,20 @@ def pgd_attack(model, images, labels, epsilon, num_steps=10, alpha=None):
 
     criterion = nn.BCELoss()
 
-    # Random start within epsilon-ball (distinguishes PGD from I-FGSM)
     adv_images = images + torch.empty_like(images).uniform_(-epsilon, epsilon)
     adv_images = adv_images.clamp(0.0, 1.0).detach()
 
     for _ in range(num_steps):
         adv_images.requires_grad_(True)
 
-        output = model(adv_images)["prediction"]
-        loss = criterion(output.squeeze(1), labels.float())
+        with autocast(enabled=use_amp):
+            output = model(adv_images)["prediction"]
+            loss = criterion(output.squeeze(1), labels.float())
+
         loss.backward()
 
-        # Gradient ascent on loss
         adv_images = adv_images + alpha * adv_images.grad.sign()
-
-        # Project back onto epsilon-ball around original
         perturbation = (adv_images - images).clamp(-epsilon, epsilon)
-
-        # Also clamp to valid image range [0, 1]
         adv_images = (images + perturbation).clamp(0.0, 1.0).detach()
 
     if was_training:

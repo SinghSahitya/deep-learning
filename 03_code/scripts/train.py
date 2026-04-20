@@ -16,6 +16,7 @@ import os
 import sys
 
 import torch
+import torch.backends.cudnn as cudnn
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -80,6 +81,9 @@ def main():
     if device == "cuda" and not torch.cuda.is_available():
         print("CUDA not available, falling back to CPU")
         device = "cpu"
+
+    if device == "cuda":
+        cudnn.benchmark = True
 
     print(f"Config: {args.config}")
     print(f"Model: {config.model.name}")

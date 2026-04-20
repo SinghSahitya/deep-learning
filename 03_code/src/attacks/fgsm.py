@@ -9,17 +9,19 @@ perturbs in sign direction scaled by epsilon.
 
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast
 
 
-def fgsm_attack(model, images, labels, epsilon):
+def fgsm_attack(model, images, labels, epsilon, use_amp=False):
     """
-    FGSM attack implementation.
+    FGSM attack implementation with optional mixed-precision support.
 
     Args:
         model: deepfake detector following forward() contract
         images: (B, 3, 224, 224) clean images in [0, 1]
         labels: (B,) ground truth (0=real, 1=fake)
         epsilon: perturbation budget (e.g., 4/255)
+        use_amp: use mixed precision for forward pass
 
     Returns:
         (B, 3, 224, 224) adversarial images clamped to [0, 1]
@@ -29,10 +31,10 @@ def fgsm_attack(model, images, labels, epsilon):
 
     images_adv = images.clone().detach().requires_grad_(True)
 
-    output = model(images_adv)["prediction"]  # (B, 1)
-
-    criterion = nn.BCELoss()
-    loss = criterion(output.squeeze(1), labels.float())
+    with autocast(enabled=use_amp):
+        output = model(images_adv)["prediction"]
+        criterion = nn.BCELoss()
+        loss = criterion(output.squeeze(1), labels.float())
 
     loss.backward()
 
