@@ -10,11 +10,15 @@ Per batch:
     4. Compute CombinedRobustLoss
     5. Backward + optimizer step
 
+Uses adversarial warmup: ramps epsilon and PGD steps over the first
+few epochs to prevent catastrophic overfitting.
+
 Validates on both clean and PGD accuracy.
 Saves best checkpoint by combined metric (0.5*clean + 0.5*pgd).
 """
 
 import os
+from datetime import datetime
 import torch
 import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
@@ -24,10 +28,29 @@ from src.attacks.pgd import pgd_attack
 from src.losses.combined_loss import CombinedRobustLoss
 
 
+def _get_warmup_schedule(epoch, freeze_epochs, epochs, target_eps, target_steps):
+    """Ramp adversarial strength over epochs after backbone unfreeze."""
+    adv_epoch = max(0, epoch - freeze_epochs)
+    total_adv_epochs = epochs - freeze_epochs
+    warmup_fraction = 0.3
+    warmup_epochs = max(1, int(total_adv_epochs * warmup_fraction))
+
+    if adv_epoch <= 0:
+        return target_eps * 0.25, max(1, target_steps // 3)
+
+    if adv_epoch <= warmup_epochs:
+        progress = adv_epoch / warmup_epochs
+        cur_eps = target_eps * (0.25 + 0.75 * progress)
+        cur_steps = max(1, int(target_steps * (0.33 + 0.67 * progress)))
+        return cur_eps, cur_steps
+
+    return target_eps, target_steps
+
+
 def train_adversarial(model, train_loader, val_loader, config, device):
     """
     Full adversarial training loop with AFS + frequency consistency loss.
-    Uses mixed precision (AMP) for ~2x speedup on GPU.
+    Uses mixed precision (AMP) and adversarial warmup.
     """
     # ── Extract config values ──
     epochs = config.training.epochs
@@ -40,8 +63,8 @@ def train_adversarial(model, train_loader, val_loader, config, device):
     lambda_afs = config.loss.lambda_afs
     lambda_freq = config.loss.lambda_freq
 
-    eps = config.adversarial.epsilon
-    pgd_steps = config.adversarial.pgd_steps
+    target_eps = config.adversarial.epsilon
+    target_pgd_steps = config.adversarial.pgd_steps
     pgd_alpha = config.adversarial.pgd_alpha
     val_pgd_steps = config.adversarial.get("val_pgd_steps", 7)
 
@@ -49,6 +72,7 @@ def train_adversarial(model, train_loader, val_loader, config, device):
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     checkpoint_tag = config.get("checkpoint_tag", config.model.name)
+    run_id = datetime.now().strftime("%m%d_%H%M")
 
     # ── Setup ──
     model = model.to(device)
@@ -128,6 +152,11 @@ def train_adversarial(model, train_loader, val_loader, config, device):
                     optimizer, mode="max", factor=0.5, patience=3, min_lr=1e-6
                 )
 
+        # ── Adversarial warmup schedule ──
+        cur_eps, cur_steps = _get_warmup_schedule(
+            epoch, freeze_epochs, epochs, target_eps, target_pgd_steps
+        )
+
         # ══════════════════════════════════════════
         # TRAINING PHASE
         # ══════════════════════════════════════════
@@ -149,8 +178,8 @@ def train_adversarial(model, train_loader, val_loader, config, device):
 
             adv_images = pgd_attack(
                 model, images, labels,
-                epsilon=eps,
-                num_steps=pgd_steps,
+                epsilon=cur_eps,
+                num_steps=cur_steps,
                 alpha=pgd_alpha,
                 use_amp=use_amp,
                 keep_mode=True,
@@ -196,11 +225,11 @@ def train_adversarial(model, train_loader, val_loader, config, device):
         history["afs_freq"].append(avg_afs_freq)
 
         # ══════════════════════════════════════════
-        # VALIDATION PHASE (single pass)
+        # VALIDATION PHASE (single pass, always at full strength)
         # ══════════════════════════════════════════
         val_clean_acc, val_pgd_acc, val_loss = _validate(
             model, val_loader, criterion, device,
-            eps=eps, pgd_steps=val_pgd_steps, pgd_alpha=pgd_alpha,
+            eps=target_eps, pgd_steps=val_pgd_steps, pgd_alpha=pgd_alpha,
             use_amp=use_amp,
         )
 
@@ -223,6 +252,7 @@ def train_adversarial(model, train_loader, val_loader, config, device):
             f"Loss: {avg_loss:.4f} | "
             f"BCE(c/a): {avg_bce_clean:.4f}/{avg_bce_adv:.4f} | "
             f"AFS(s/f): {avg_afs_spatial:.4f}/{avg_afs_freq:.4f} | "
+            f"eps: {cur_eps:.4f} steps: {cur_steps} | "
             f"Val Clean: {val_clean_acc:.4f} | Val PGD: {val_pgd_acc:.4f} | "
             f"Combined: {combined:.4f} | "
             f"LR: {optimizer.param_groups[0]['lr']:.6f}"
@@ -231,7 +261,7 @@ def train_adversarial(model, train_loader, val_loader, config, device):
         # ── Save best checkpoint by combined metric ──
         if combined > best_combined:
             best_combined = combined
-            ckpt_path = os.path.join(checkpoint_dir, f"best_{checkpoint_tag}.pth")
+            ckpt_path = os.path.join(checkpoint_dir, f"best_{checkpoint_tag}_{run_id}.pth")
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
