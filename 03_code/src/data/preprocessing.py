@@ -190,3 +190,67 @@ def create_splits(
     test_df.to_csv(os.path.join(output_dir, "test.csv"), index=False)
 
     return len(train_df), len(val_df), len(test_df)
+
+
+def create_video_splits(
+    image_paths,
+    labels,
+    video_ids,
+    output_dir,
+    train_ratio=0.7,
+    val_ratio=0.15,
+    test_ratio=0.15,
+    seed=42,
+):
+    """
+    Video-level stratified split: all frames from one video stay in the same
+    split, preventing data leakage across train/val/test.
+
+    Saves CSV files with columns: path, label, video_id.
+
+    Args:
+        image_paths: list of frame image paths
+        labels: list of labels (0=real, 1=fake), one per frame
+        video_ids: list of video identifiers, one per frame (frames from the
+                   same video share the same id)
+        output_dir: directory to write train.csv, val.csv, test.csv
+        train_ratio, val_ratio, test_ratio: split proportions
+        seed: random seed
+
+    Returns:
+        (train_count, val_count, test_count) — counts of frames, not videos
+    """
+    df = pd.DataFrame({"path": image_paths, "label": labels, "video_id": video_ids})
+
+    video_df = df.groupby("video_id").agg({"label": "first"}).reset_index()
+
+    train_vids, val_test_vids = train_test_split(
+        video_df["video_id"],
+        test_size=(val_ratio + test_ratio),
+        stratify=video_df["label"],
+        random_state=seed,
+    )
+
+    val_test_labels = video_df[video_df["video_id"].isin(val_test_vids)]["label"]
+    relative_test_ratio = test_ratio / (val_ratio + test_ratio)
+    val_vids, test_vids = train_test_split(
+        val_test_vids,
+        test_size=relative_test_ratio,
+        stratify=val_test_labels,
+        random_state=seed,
+    )
+
+    train_vids_set = set(train_vids)
+    val_vids_set = set(val_vids)
+    test_vids_set = set(test_vids)
+
+    train_df = df[df["video_id"].isin(train_vids_set)]
+    val_df = df[df["video_id"].isin(val_vids_set)]
+    test_df = df[df["video_id"].isin(test_vids_set)]
+
+    os.makedirs(output_dir, exist_ok=True)
+    train_df.to_csv(os.path.join(output_dir, "train.csv"), index=False)
+    val_df.to_csv(os.path.join(output_dir, "val.csv"), index=False)
+    test_df.to_csv(os.path.join(output_dir, "test.csv"), index=False)
+
+    return len(train_df), len(val_df), len(test_df)

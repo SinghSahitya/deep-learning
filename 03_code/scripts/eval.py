@@ -199,25 +199,39 @@ def main():
     print("\nGenerating adversarial example visualizations...")
     model.eval()
     sample_batch = next(iter(test_loader))
-    sample_images = sample_batch["image"][:6].to(device)
+
+    if "clip" in sample_batch:
+        sample_inputs = sample_batch["clip"][:6].to(device)
+    else:
+        sample_inputs = sample_batch["image"][:6].to(device)
+
     sample_labels_raw = sample_batch["label"][:6].to(device)
     if sample_labels_raw.dim() > 1:
         sample_labels = sample_labels_raw.squeeze(-1).long()
     else:
         sample_labels = sample_labels_raw.long()
 
-    adv_images = pgd_attack(model, sample_images, sample_labels, epsilon=4 / 255)
-    perturbations = adv_images - sample_images
+    adv_inputs = pgd_attack(model, sample_inputs, sample_labels, epsilon=4 / 255)
+    perturbations = adv_inputs - sample_inputs
 
     with torch.no_grad():
-        clean_preds = model(sample_images)["prediction"].squeeze(1).cpu().numpy()
-        adv_preds = model(adv_images)["prediction"].squeeze(1).cpu().numpy()
+        clean_preds = model(sample_inputs)["prediction"].squeeze(1).cpu().numpy()
+        adv_preds = model(adv_inputs)["prediction"].squeeze(1).cpu().numpy()
+
+    # For visualization: use first frame of each clip if 5D, otherwise use as-is
+    vis_clean = sample_inputs
+    vis_adv = adv_inputs
+    vis_pert = perturbations
+    if vis_clean.dim() == 5:
+        vis_clean = vis_clean[:, 0]
+        vis_adv = vis_adv[:, 0]
+        vis_pert = vis_pert[:, 0]
 
     adv_vis_path = os.path.join(figures_dir, f"adversarial_examples_{safe_name}.png")
     plot_adversarial_examples(
-        sample_images.cpu().numpy(),
-        adv_images.cpu().numpy(),
-        perturbations.cpu().numpy(),
+        vis_clean.cpu().numpy(),
+        vis_adv.cpu().numpy(),
+        vis_pert.cpu().numpy(),
         clean_preds,
         adv_preds,
         adv_vis_path,

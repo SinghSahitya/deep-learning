@@ -8,6 +8,10 @@ Architecture:
     Feature FC: Linear(1792, spatial_dim) -> (B, 256)
     Classifier: 256 -> 128 -> 1 with ReLU, Dropout, Sigmoid
 
+Accepts (B, 3, H, W) single frames OR (B, T, 3, H, W) clips.
+For clips: processes each frame through EfficientNet independently, then
+mean-pools the per-frame features before classification.
+
 forward(x) returns:
     {
         "prediction": (B, 1) sigmoid,
@@ -29,15 +33,12 @@ class EfficientNetDetector(nn.Module):
         super().__init__()
         self.spatial_dim = spatial_dim
 
-        # EfficientNet-B4 with classification head removed (outputs (B, 1792))
         self.backbone = timm.create_model(
             "efficientnet_b4", pretrained=pretrained, num_classes=0
         )
 
-        # Project backbone features to spatial_dim
         self.feature_fc = nn.Linear(1792, spatial_dim)
 
-        # Classification head
         self.classifier = nn.Sequential(
             nn.Linear(spatial_dim, 128),
             nn.ReLU(inplace=True),
@@ -49,12 +50,21 @@ class EfficientNetDetector(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: (B, 3, 224, 224) in [0, 1]
+            x: (B, 3, H, W) single frames  OR  (B, T, 3, H, W) clips
         Returns:
             dict with prediction, spatial_features, freq_features=None
         """
-        backbone_features = self.backbone(x)                # (B, 1792)
-        spatial_features = self.feature_fc(backbone_features)  # (B, spatial_dim)
+        if x.dim() == 5:
+            B, T, C, H, W = x.shape
+            flat = x.reshape(B * T, C, H, W)
+            backbone_out = self.backbone(flat)               # (B*T, 1792)
+            projected = self.feature_fc(backbone_out)        # (B*T, spatial_dim)
+            projected = projected.reshape(B, T, -1)          # (B, T, spatial_dim)
+            spatial_features = projected.mean(dim=1)         # (B, spatial_dim)
+        else:
+            backbone_features = self.backbone(x)             # (B, 1792)
+            spatial_features = self.feature_fc(backbone_features)
+
         prediction = self.classifier(spatial_features)       # (B, 1)
 
         return {
@@ -64,11 +74,9 @@ class EfficientNetDetector(nn.Module):
         }
 
     def freeze_backbone(self):
-        """Freeze EfficientNet backbone parameters for warm-up training."""
         for param in self.backbone.parameters():
             param.requires_grad = False
 
     def unfreeze_backbone(self):
-        """Unfreeze EfficientNet backbone parameters for full fine-tuning."""
         for param in self.backbone.parameters():
             param.requires_grad = True

@@ -15,17 +15,22 @@ from src.attacks.pgd import pgd_attack
 from src.utils.metrics import compute_metrics
 
 
+def _get_inputs(batch, device):
+    """Extract model input tensor from batch (clip or single-frame)."""
+    if "clip" in batch:
+        return batch["clip"].to(device)
+    return batch["image"].to(device)
+
+
 def evaluate_model(model, test_loader, device, attacks=None):
     """
     Evaluate model on clean data and under adversarial attacks.
 
     Args:
         model: detector model
-        test_loader: DataLoader for test set
+        test_loader: DataLoader for test set (clip or single-frame)
         device: 'cuda' or 'cpu'
         attacks: dict of attack_name -> attack_function
-                 e.g., {"fgsm_2": lambda m,x,y: fgsm_attack(m,x,y,2/255),
-                        "pgd_4":  lambda m,x,y: pgd_attack(m,x,y,4/255)}
 
     Returns:
         dict: {condition_name: {"accuracy", "auc", "predictions", "labels", ...}}
@@ -40,26 +45,23 @@ def evaluate_model(model, test_loader, device, attacks=None):
     all_predictions = {c: [] for c in conditions}
     all_labels = {c: [] for c in conditions}
 
-    # Attacks need gradients; purely clean eval can run under no_grad.
     outer_ctx = torch.enable_grad() if len(attacks) > 0 else torch.no_grad()
 
     with outer_ctx:
         for batch in tqdm(test_loader, desc="Evaluating"):
-            images = batch["image"].to(device)
+            inputs = _get_inputs(batch, device)
             labels = batch["label"].to(device)
 
-            # --- Clean evaluation ---
             with torch.no_grad():
-                clean_output = model(images)["prediction"]
+                clean_output = model(inputs)["prediction"]
             clean_preds = clean_output.squeeze(1).cpu().numpy()
             all_predictions["clean"].extend(clean_preds.tolist())
             all_labels["clean"].extend(labels.cpu().numpy().tolist())
 
-            # --- Adversarial evaluations ---
             for attack_name, attack_fn in attacks.items():
-                adv_images = attack_fn(model, images, labels)
+                adv_inputs = attack_fn(model, inputs, labels)
                 with torch.no_grad():
-                    adv_output = model(adv_images)["prediction"]
+                    adv_output = model(adv_inputs)["prediction"]
                 adv_preds = adv_output.squeeze(1).cpu().numpy()
                 all_predictions[attack_name].extend(adv_preds.tolist())
                 all_labels[attack_name].extend(labels.cpu().numpy().tolist())

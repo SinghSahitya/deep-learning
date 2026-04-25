@@ -18,13 +18,20 @@ import torch.nn as nn
 from tqdm import tqdm
 
 
+def _get_inputs(batch, device):
+    """Extract model input tensor from batch (clip or single-frame)."""
+    if "clip" in batch:
+        return batch["clip"].to(device)
+    return batch["image"].to(device)
+
+
 def train_baseline(model, train_loader, val_loader, config, device):
     """
     Standard (non-adversarial) training loop with BCE loss.
 
     Args:
         model: BaselineCNN, EfficientNetDetector, or MultiDomainDetector
-        train_loader: DataLoader yielding {"image": Tensor, "label": Tensor}
+        train_loader: DataLoader yielding {"clip"|"image": Tensor, "label": Tensor}
         val_loader: DataLoader
         config: DotDict from YAML config
         device: 'cuda' or 'cpu'
@@ -57,7 +64,6 @@ def train_baseline(model, train_loader, val_loader, config, device):
     best_val_acc = 0.0
 
     for epoch in range(1, epochs + 1):
-        # Backbone freezing (if model supports it)
         if hasattr(model, "freeze_backbone"):
             if epoch <= freeze_epochs:
                 model.freeze_backbone()
@@ -77,16 +83,15 @@ def train_baseline(model, train_loader, val_loader, config, device):
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", leave=False)
         for batch in pbar:
-            images = batch["image"].to(device)
+            inputs = _get_inputs(batch, device)
             labels_raw = batch["label"].to(device)
 
-            # Ensure label shape (B, 1) float
             if labels_raw.dim() == 1:
                 labels = labels_raw.float().unsqueeze(1)
             else:
                 labels = labels_raw.float()
 
-            output = model(images)
+            output = model(inputs)
             loss = criterion(output["prediction"], labels)
 
             optimizer.zero_grad()
@@ -109,7 +114,7 @@ def train_baseline(model, train_loader, val_loader, config, device):
 
         with torch.no_grad():
             for batch in val_loader:
-                images = batch["image"].to(device)
+                inputs = _get_inputs(batch, device)
                 labels_raw = batch["label"].to(device)
 
                 if labels_raw.dim() == 1:
@@ -119,7 +124,7 @@ def train_baseline(model, train_loader, val_loader, config, device):
                     labels_float = labels_raw.float()
                     labels_int = labels_raw.squeeze(-1).long()
 
-                output = model(images)
+                output = model(inputs)
                 loss = criterion(output["prediction"], labels_float)
                 val_loss += loss.item()
                 val_batches += 1
@@ -153,7 +158,7 @@ def train_baseline(model, train_loader, val_loader, config, device):
                 },
                 ckpt_path,
             )
-            print(f"  ✓ Saved best checkpoint (acc: {val_acc:.4f}) -> {ckpt_path}")
+            print(f"  -> Saved best checkpoint (acc: {val_acc:.4f}) -> {ckpt_path}")
 
     print(f"\nTraining complete. Best val accuracy: {best_val_acc:.4f}")
     return history

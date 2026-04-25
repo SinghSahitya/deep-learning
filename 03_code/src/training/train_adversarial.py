@@ -47,6 +47,13 @@ def _get_warmup_schedule(epoch, freeze_epochs, epochs, target_eps, target_steps)
     return target_eps, target_steps
 
 
+def _get_inputs(batch, device):
+    """Extract model input tensor from batch (clip or single-frame)."""
+    if "clip" in batch:
+        return batch["clip"].to(device, non_blocking=True)
+    return batch["image"].to(device, non_blocking=True)
+
+
 def train_adversarial(model, train_loader, val_loader, config, device):
     """
     Full adversarial training loop with AFS + frequency consistency loss.
@@ -170,24 +177,24 @@ def train_adversarial(model, train_loader, val_loader, config, device):
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} [Train]", leave=False)
         for batch in pbar:
-            images = batch["image"].to(device, non_blocking=True)
+            inputs = _get_inputs(batch, device)
             labels = batch["label"].to(device, non_blocking=True)
 
             with autocast(enabled=use_amp):
-                clean_output = model(images)
+                clean_output = model(inputs)
 
-            adv_images = pgd_attack(
-                model, images, labels,
+            adv_inputs = pgd_attack(
+                model, inputs, labels,
                 epsilon=cur_eps,
                 num_steps=cur_steps,
                 alpha=pgd_alpha,
                 use_amp=use_amp,
                 keep_mode=True,
             )
-            adv_images = adv_images.detach()
+            adv_inputs = adv_inputs.detach()
 
             with autocast(enabled=use_amp):
-                adv_output = model(adv_images)
+                adv_output = model(adv_inputs)
 
             loss_dict = criterion(clean_output, adv_output, labels)
 
@@ -286,22 +293,22 @@ def _validate(model, val_loader, criterion, device, eps, pgd_steps, pgd_alpha, u
     num_batches = 0
 
     for batch in val_loader:
-        images = batch["image"].to(device, non_blocking=True)
+        inputs = _get_inputs(batch, device)
         labels = batch["label"].to(device, non_blocking=True)
 
         with torch.no_grad(), autocast(enabled=use_amp):
-            clean_output = model(images)
+            clean_output = model(inputs)
             clean_preds = (clean_output["prediction"].squeeze(1) >= 0.5).long()
             clean_correct += (clean_preds == labels).sum().item()
 
-        adv_images = pgd_attack(
-            model, images, labels,
+        adv_inputs = pgd_attack(
+            model, inputs, labels,
             epsilon=eps, num_steps=pgd_steps, alpha=pgd_alpha,
             use_amp=use_amp,
         )
 
         with torch.no_grad(), autocast(enabled=use_amp):
-            adv_output = model(adv_images)
+            adv_output = model(adv_inputs)
             pgd_preds = (adv_output["prediction"].squeeze(1) >= 0.5).long()
             pgd_correct += (pgd_preds == labels).sum().item()
 
