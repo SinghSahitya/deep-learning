@@ -71,19 +71,28 @@ def load_model(config, checkpoint_path, device):
 
 
 def load_test_data(config):
-    """Load test dataset and create DataLoader."""
-    from src.data.dataset import DeepfakeDataset
-    from src.data.augmentations import get_val_transforms
+    """Load test dataset and create DataLoader (clip or single-frame based on config)."""
+    from src.data.dataset import DeepfakeDataset, DeepfakeVideoDataset
+    from src.data.augmentations import get_val_transforms, ClipValTransform
 
     test_csv = config["data"]["test_csv"]
     image_size = config["data"].get("image_size", 224)
     num_workers = config["data"].get("num_workers", 4)
     batch_size = config["training"]["batch_size"]
+    clip_length = config["data"].get("clip_length", 0)
 
-    test_dataset = DeepfakeDataset(
-        csv_path=test_csv,
-        transform=get_val_transforms(image_size),
-    )
+    if clip_length > 0:
+        test_dataset = DeepfakeVideoDataset(
+            csv_path=test_csv,
+            clip_length=clip_length,
+            transform=ClipValTransform(image_size),
+        )
+    else:
+        test_dataset = DeepfakeDataset(
+            csv_path=test_csv,
+            transform=get_val_transforms(image_size),
+        )
+
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,

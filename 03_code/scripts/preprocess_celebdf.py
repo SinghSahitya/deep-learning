@@ -74,7 +74,7 @@ def process_videos(video_paths, label, output_dir, detector, frame_interval):
         saved_paths = crop_faces_batch(frames, video_name, video_output_dir, detector)
 
         for p in saved_paths:
-            all_paths.append(p)
+            all_paths.append(os.path.abspath(p))
             all_labels.append(label)
             all_video_ids.append(video_name)
 
