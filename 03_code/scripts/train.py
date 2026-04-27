@@ -71,6 +71,12 @@ def main():
         default="05_results/models",
         help="Where to save checkpoints",
     )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to checkpoint to resume training from",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -118,7 +124,9 @@ def main():
         print(f"  lambda_freq: {config.loss.lambda_freq}")
         print(f"  epsilon:     {config.adversarial.epsilon}")
         print(f"  PGD steps:   {config.adversarial.pgd_steps}")
-        history = train_adversarial(model, train_loader, val_loader, config, device)
+        if args.resume:
+            print(f"  Resuming from: {args.resume}")
+        history = train_adversarial(model, train_loader, val_loader, config, device, resume_from=args.resume)
     else:
         print("\n=== Baseline Training ===")
         history = train_baseline(model, train_loader, val_loader, config, device)

@@ -14,7 +14,8 @@ Uses adversarial warmup: ramps epsilon and PGD steps over the first
 few epochs to prevent catastrophic overfitting.
 
 Validates on both clean and PGD accuracy.
-Saves best checkpoint by combined metric (0.5*clean + 0.5*pgd).
+Saves best checkpoint by combined metric (0.7*clean + 0.3*pgd).
+Also saves last-epoch checkpoint for resume.
 """
 
 import os
@@ -32,16 +33,16 @@ def _get_warmup_schedule(epoch, freeze_epochs, epochs, target_eps, target_steps)
     """Ramp adversarial strength over epochs after backbone unfreeze."""
     adv_epoch = max(0, epoch - freeze_epochs)
     total_adv_epochs = epochs - freeze_epochs
-    warmup_fraction = 0.3
+    warmup_fraction = 0.15
     warmup_epochs = max(1, int(total_adv_epochs * warmup_fraction))
 
     if adv_epoch <= 0:
-        return target_eps * 0.25, max(1, target_steps // 3)
+        return target_eps * 0.5, max(2, target_steps // 2)
 
     if adv_epoch <= warmup_epochs:
         progress = adv_epoch / warmup_epochs
-        cur_eps = target_eps * (0.25 + 0.75 * progress)
-        cur_steps = max(1, int(target_steps * (0.33 + 0.67 * progress)))
+        cur_eps = target_eps * (0.5 + 0.5 * progress)
+        cur_steps = max(2, int(target_steps * (0.5 + 0.5 * progress)))
         return cur_eps, cur_steps
 
     return target_eps, target_steps
@@ -54,10 +55,13 @@ def _get_inputs(batch, device):
     return batch["image"].to(device, non_blocking=True)
 
 
-def train_adversarial(model, train_loader, val_loader, config, device):
+def train_adversarial(model, train_loader, val_loader, config, device, resume_from=None):
     """
     Full adversarial training loop with AFS + frequency consistency loss.
     Uses mixed precision (AMP) and adversarial warmup.
+
+    Args:
+        resume_from: path to checkpoint to resume training from (optional)
     """
     # ── Extract config values ──
     epochs = config.training.epochs
@@ -88,15 +92,40 @@ def train_adversarial(model, train_loader, val_loader, config, device):
     use_amp = device == "cuda"
     scaler = GradScaler(enabled=use_amp)
 
+    # ── Resume from checkpoint if provided ──
+    start_epoch = 1
+    best_combined = 0.0
+
+    if resume_from and os.path.exists(resume_from):
+        print(f"Resuming from checkpoint: {resume_from}")
+        ckpt = torch.load(resume_from, map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        start_epoch = ckpt.get("epoch", 0) + 1
+        best_combined = 0.5 * ckpt.get("val_clean_acc", 0) + 0.5 * ckpt.get("val_pgd_acc", 0)
+        print(f"  Resuming at epoch {start_epoch}, previous best combined: {best_combined:.4f}")
+
+    # ── Optimizer setup ──
+    # Always start with all params unfrozen if resuming past freeze phase
+    if start_epoch > freeze_epochs and hasattr(model, "unfreeze_backbone"):
+        model.unfreeze_backbone()
+
     optimizer = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=lr,
         weight_decay=weight_decay,
     )
 
+    if resume_from and os.path.exists(resume_from):
+        if "optimizer_state_dict" in ckpt:
+            try:
+                optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            except Exception:
+                pass
+
+    adv_epochs = max(1, epochs - freeze_epochs)
     if scheduler_type == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=epochs, eta_min=1e-6
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=adv_epochs, T_mult=1, eta_min=1e-6
         )
     else:
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -116,21 +145,19 @@ def train_adversarial(model, train_loader, val_loader, config, device):
         "lr": [],
     }
 
-    best_combined = 0.0
-
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         # ── Backbone freezing / unfreezing ──
         if epoch <= freeze_epochs:
             model.freeze_backbone()
-            if epoch == 1:
+            if epoch == start_epoch:
                 optimizer = torch.optim.Adam(
                     filter(lambda p: p.requires_grad, model.parameters()),
                     lr=lr,
                     weight_decay=weight_decay,
                 )
                 if scheduler_type == "cosine":
-                    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                        optimizer, T_max=epochs, eta_min=1e-6
+                    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                        optimizer, T_0=max(1, epochs - freeze_epochs), T_mult=1, eta_min=1e-6
                     )
                 else:
                     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -150,9 +177,10 @@ def train_adversarial(model, train_loader, val_loader, config, device):
                 {"params": backbone_params, "lr": backbone_lr},
                 {"params": head_params, "lr": lr},
             ], weight_decay=weight_decay)
+            adv_epochs = max(1, epochs - freeze_epochs)
             if scheduler_type == "cosine":
-                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=epochs - freeze_epochs, eta_min=1e-6
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                    optimizer, T_0=adv_epochs, T_mult=1, eta_min=1e-6
                 )
             else:
                 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -247,13 +275,13 @@ def train_adversarial(model, train_loader, val_loader, config, device):
 
         # ── Learning rate scheduling ──
         if scheduler_type == "cosine":
-            scheduler.step()
+            scheduler.step(epoch - freeze_epochs)
         else:
             scheduler.step(val_pgd_acc)
 
         # ── Logging ──
         frozen_str = " [backbone frozen]" if epoch <= freeze_epochs else ""
-        combined = 0.5 * val_clean_acc + 0.5 * val_pgd_acc
+        combined = 0.7 * val_clean_acc + 0.3 * val_pgd_acc
         print(
             f"Epoch {epoch}/{epochs}{frozen_str} | "
             f"Loss: {avg_loss:.4f} | "
@@ -279,7 +307,19 @@ def train_adversarial(model, train_loader, val_loader, config, device):
             }, ckpt_path)
             print(f"  -> Saved best checkpoint (combined: {combined:.4f}) -> {ckpt_path}")
 
-    print(f"\nTraining complete. Best combined (0.5*clean + 0.5*pgd): {best_combined:.4f}")
+    # ── Save last-epoch checkpoint ──
+    last_path = os.path.join(checkpoint_dir, f"last_epoch_{checkpoint_tag}.pth")
+    torch.save({
+        "epoch": epochs,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "val_clean_acc": val_clean_acc,
+        "val_pgd_acc": val_pgd_acc,
+        "config": dict(config),
+    }, last_path)
+    print(f"  -> Saved last-epoch checkpoint -> {last_path}")
+
+    print(f"\nTraining complete. Best combined (0.7*clean + 0.3*pgd): {best_combined:.4f}")
     return history
 
 
