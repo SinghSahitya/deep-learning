@@ -35,7 +35,7 @@ def fgsm_attack(model, images, labels, epsilon, use_amp=False):
         output = model(images_adv)["prediction"]
 
     criterion = nn.BCELoss()
-    loss = criterion(output.float().squeeze(1), labels.float())
+    loss = criterion(output.float().squeeze(1).clamp(1e-7, 1 - 1e-7), labels.float())
     loss.backward()
 
     perturbation = epsilon * images_adv.grad.sign()
