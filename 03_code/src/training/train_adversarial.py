@@ -275,7 +275,7 @@ def train_adversarial(model, train_loader, val_loader, config, device, resume_fr
 
         # ── Learning rate scheduling ──
         if scheduler_type == "cosine":
-            scheduler.step(epoch - freeze_epochs)
+            scheduler.step(max(0, epoch - freeze_epochs))
         else:
             scheduler.step(val_pgd_acc)
 
