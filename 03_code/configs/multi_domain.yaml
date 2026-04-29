@@ -29,5 +29,5 @@ data:
   val_csv: "../04_data/celeb_df_frames/val.csv"
   test_csv: "../04_data/celeb_df_frames/test.csv"
   image_size: 224
-  clip_length: 16
+  clip_length: 8
   num_workers: 8
